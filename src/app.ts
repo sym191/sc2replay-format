@@ -4,6 +4,9 @@ import { validateReplayFile } from './replay/security';
 import type { EditorDocument } from './replay/types';
 
 type StatusKind = 'idle' | 'busy' | 'error' | 'success';
+type FileHandler = (file: File) => void | Promise<void>;
+
+let activeHomeDragCleanup: (() => void) | null = null;
 
 function createElement<K extends keyof HTMLElementTagNameMap>(
   tagName: K,
@@ -54,8 +57,84 @@ function renderPreview(preview: HTMLElement, markdown: string): void {
   preview.innerHTML = renderMarkdown(markdown);
 }
 
+function dragEventHasFiles(event: DragEvent): boolean {
+  return Array.from(event.dataTransfer?.types ?? []).includes('Files');
+}
+
+function installWindowFileDrop(dropzone: HTMLElement, handleFile: FileHandler): () => void {
+  let dragDepth = 0;
+
+  const activate = (event: DragEvent) => {
+    if (!dragEventHasFiles(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer!.dropEffect = 'copy';
+    dropzone.classList.add('is-dragging');
+  };
+
+  const handleDragEnter = (event: DragEvent) => {
+    if (!dragEventHasFiles(event)) {
+      return;
+    }
+
+    dragDepth += 1;
+    activate(event);
+  };
+
+  const handleDragOver = (event: DragEvent) => {
+    activate(event);
+  };
+
+  const handleDragLeave = (event: DragEvent) => {
+    if (!dragEventHasFiles(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepth = Math.max(0, dragDepth - 1);
+
+    if (dragDepth === 0) {
+      dropzone.classList.remove('is-dragging');
+    }
+  };
+
+  const handleDrop = (event: DragEvent) => {
+    if (!dragEventHasFiles(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepth = 0;
+    dropzone.classList.remove('is-dragging');
+
+    const file = event.dataTransfer?.files[0];
+    if (file) {
+      void handleFile(file);
+    }
+  };
+
+  window.addEventListener('dragenter', handleDragEnter, true);
+  window.addEventListener('dragover', handleDragOver, true);
+  window.addEventListener('dragleave', handleDragLeave, true);
+  window.addEventListener('drop', handleDrop, true);
+
+  return () => {
+    window.removeEventListener('dragenter', handleDragEnter, true);
+    window.removeEventListener('dragover', handleDragOver, true);
+    window.removeEventListener('dragleave', handleDragLeave, true);
+    window.removeEventListener('drop', handleDrop, true);
+  };
+}
+
 export function startApp(root: HTMLElement): void {
   const renderHome = (initialMessage = '文件只在当前浏览器中读取，不会上传。') => {
+    activeHomeDragCleanup?.();
+    activeHomeDragCleanup = null;
     root.textContent = '';
 
     const shell = createElement('div', 'app-shell');
@@ -119,26 +198,7 @@ export function startApp(root: HTMLElement): void {
       }
     });
 
-    for (const eventName of ['dragenter', 'dragover']) {
-      dropzone.addEventListener(eventName, (event) => {
-        event.preventDefault();
-        dropzone.classList.add('is-dragging');
-      });
-    }
-
-    for (const eventName of ['dragleave', 'drop']) {
-      dropzone.addEventListener(eventName, (event) => {
-        event.preventDefault();
-        dropzone.classList.remove('is-dragging');
-      });
-    }
-
-    dropzone.addEventListener('drop', (event) => {
-      const file = event.dataTransfer?.files[0];
-      if (file) {
-        void handleFile(file);
-      }
-    });
+    activeHomeDragCleanup = installWindowFileDrop(dropzone, handleFile);
 
     main.append(dropzone, status);
     shell.append(createHeader(), main);
@@ -146,6 +206,8 @@ export function startApp(root: HTMLElement): void {
   };
 
   const renderResult = (document: EditorDocument, sourceFileName: string) => {
+    activeHomeDragCleanup?.();
+    activeHomeDragCleanup = null;
     root.textContent = '';
 
     let markdown = document.markdown;
