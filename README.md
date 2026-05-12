@@ -26,3 +26,8 @@ npm run build
 ## 部署
 
 推送到 `main` 分支后，`.github/workflows/pages.yml` 会执行构建并发布 `dist` 到 GitHub Pages。
+
+如果第一次部署时报 `Get Pages site failed` 或 `Not Found`，说明仓库还没有启用 GitHub Pages。处理方式二选一：
+
+1. 在 GitHub 仓库 `Settings -> Pages` 中把 Source 设为 `GitHub Actions`，之后再次运行 workflow。
+2. 创建一个可管理 Pages 的 token，保存为仓库 secret：`PAGES_ENABLE_TOKEN`。workflow 检测到这个 secret 后会自动启用 Pages。
