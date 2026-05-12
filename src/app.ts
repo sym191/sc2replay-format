@@ -74,11 +74,41 @@ function renderPreview(preview: HTMLElement, markdown: string): void {
 }
 
 function dragEventHasFiles(event: DragEvent): boolean {
-  return Array.from(event.dataTransfer?.types ?? []).includes('Files');
+  const dataTransfer = event.dataTransfer;
+  if (!dataTransfer) {
+    return false;
+  }
+
+  if (dataTransfer.files.length > 0) {
+    return true;
+  }
+
+  const types = Array.from(dataTransfer.types ?? []);
+  if (types.some((type) => type.toLowerCase() === 'files')) {
+    return true;
+  }
+
+  const items = Array.from(dataTransfer.items ?? []);
+  if (items.some((item) => item.kind === 'file')) {
+    return true;
+  }
+
+  return event.type !== 'drop' && types.length === 0 && items.length === 0;
 }
 
 function installWindowFileDrop(dropzone: HTMLElement, handleFile: FileHandler): () => void {
-  let dragDepth = 0;
+  let dragLeaveTimer = 0;
+  const handledDrops = new WeakSet<DragEvent>();
+
+  const showDropzone = () => {
+    window.clearTimeout(dragLeaveTimer);
+    dropzone.classList.add('is-dragging');
+  };
+
+  const hideDropzone = () => {
+    window.clearTimeout(dragLeaveTimer);
+    dropzone.classList.remove('is-dragging');
+  };
 
   const activate = (event: DragEvent) => {
     if (!dragEventHasFiles(event)) {
@@ -87,16 +117,13 @@ function installWindowFileDrop(dropzone: HTMLElement, handleFile: FileHandler): 
 
     event.preventDefault();
     event.stopPropagation();
-    event.dataTransfer!.dropEffect = 'copy';
-    dropzone.classList.add('is-dragging');
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'copy';
+    }
+    showDropzone();
   };
 
   const handleDragEnter = (event: DragEvent) => {
-    if (!dragEventHasFiles(event)) {
-      return;
-    }
-
-    dragDepth += 1;
     activate(event);
   };
 
@@ -111,11 +138,7 @@ function installWindowFileDrop(dropzone: HTMLElement, handleFile: FileHandler): 
 
     event.preventDefault();
     event.stopPropagation();
-    dragDepth = Math.max(0, dragDepth - 1);
-
-    if (dragDepth === 0) {
-      dropzone.classList.remove('is-dragging');
-    }
+    dragLeaveTimer = window.setTimeout(hideDropzone, 80);
   };
 
   const handleDrop = (event: DragEvent) => {
@@ -125,8 +148,12 @@ function installWindowFileDrop(dropzone: HTMLElement, handleFile: FileHandler): 
 
     event.preventDefault();
     event.stopPropagation();
-    dragDepth = 0;
-    dropzone.classList.remove('is-dragging');
+    hideDropzone();
+
+    if (handledDrops.has(event)) {
+      return;
+    }
+    handledDrops.add(event);
 
     const file = event.dataTransfer?.files[0];
     if (file) {
@@ -134,12 +161,21 @@ function installWindowFileDrop(dropzone: HTMLElement, handleFile: FileHandler): 
     }
   };
 
+  document.addEventListener('dragenter', handleDragEnter, true);
+  document.addEventListener('dragover', handleDragOver, true);
+  document.addEventListener('dragleave', handleDragLeave, true);
+  document.addEventListener('drop', handleDrop, true);
   window.addEventListener('dragenter', handleDragEnter, true);
   window.addEventListener('dragover', handleDragOver, true);
   window.addEventListener('dragleave', handleDragLeave, true);
   window.addEventListener('drop', handleDrop, true);
 
   return () => {
+    hideDropzone();
+    document.removeEventListener('dragenter', handleDragEnter, true);
+    document.removeEventListener('dragover', handleDragOver, true);
+    document.removeEventListener('dragleave', handleDragLeave, true);
+    document.removeEventListener('drop', handleDrop, true);
     window.removeEventListener('dragenter', handleDragEnter, true);
     window.removeEventListener('dragover', handleDragOver, true);
     window.removeEventListener('dragleave', handleDragLeave, true);
