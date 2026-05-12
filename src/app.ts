@@ -6,7 +6,7 @@ import type { EditorDocument } from './replay/types';
 type StatusKind = 'idle' | 'busy' | 'error' | 'success';
 type FileHandler = (file: File) => void | Promise<void>;
 
-let activeHomeDragCleanup: (() => void) | null = null;
+let activeFileDropCleanup: (() => void) | null = null;
 
 function createElement<K extends keyof HTMLElementTagNameMap>(
   tagName: K,
@@ -24,7 +24,8 @@ function createElement<K extends keyof HTMLElementTagNameMap>(
 }
 
 function setStatus(target: HTMLElement, kind: StatusKind, message: string): void {
-  target.className = `status-line status-${kind}`;
+  target.classList.remove('status-idle', 'status-busy', 'status-error', 'status-success');
+  target.classList.add('status-line', `status-${kind}`);
   target.textContent = message;
 }
 
@@ -51,6 +52,21 @@ function downloadMarkdown(markdown: string, fileName: string): void {
   link.download = fileName;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+function savePreviewAsPdf(fileName: string): void {
+  const previousTitle = document.title;
+  document.title = fileName;
+  document.body.classList.add('is-pdf-print');
+
+  const cleanup = () => {
+    document.body.classList.remove('is-pdf-print');
+    document.title = previousTitle;
+    window.removeEventListener('afterprint', cleanup);
+  };
+
+  window.addEventListener('afterprint', cleanup);
+  window.print();
 }
 
 function renderPreview(preview: HTMLElement, markdown: string): void {
@@ -132,9 +148,48 @@ function installWindowFileDrop(dropzone: HTMLElement, handleFile: FileHandler): 
 }
 
 export function startApp(root: HTMLElement): void {
+  let isParsing = false;
+
+  const clearActiveFileDrop = () => {
+    activeFileDropCleanup?.();
+    activeFileDropCleanup = null;
+  };
+
+  const parseAndRenderFile = async (
+    file: File,
+    status: HTMLElement,
+    setBusy?: (busy: boolean) => void,
+  ) => {
+    if (isParsing) {
+      setStatus(status, 'busy', '正在解析上一个 replay，请稍候...');
+      return;
+    }
+
+    isParsing = true;
+    setBusy?.(true);
+    setStatus(status, 'busy', '检查文件...');
+
+    try {
+      const check = await validateReplayFile(file);
+      if (!check.ok) {
+        setStatus(status, 'error', check.message);
+        return;
+      }
+
+      setStatus(status, 'success', check.message);
+      const document = await parseReplayFile(file, (message) => setStatus(status, 'busy', message));
+      renderResult(document, file.name);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(status, 'error', `解析失败：${message}`);
+    } finally {
+      isParsing = false;
+      setBusy?.(false);
+    }
+  };
+
   const renderHome = (initialMessage = '文件只在当前浏览器中读取，不会上传。') => {
-    activeHomeDragCleanup?.();
-    activeHomeDragCleanup = null;
+    clearActiveFileDrop();
     root.textContent = '';
 
     const shell = createElement('div', 'app-shell');
@@ -154,28 +209,13 @@ export function startApp(root: HTMLElement): void {
     dropzone.append(dropTitle, dropHint, chooseButton, fileInput);
 
     const handleFile = async (file: File) => {
-      setStatus(status, 'busy', '检查文件...');
-      chooseButton.setAttribute('disabled', 'true');
-      dropzone.classList.add('is-busy');
-
-      try {
-        const check = await validateReplayFile(file);
-        if (!check.ok) {
-          setStatus(status, 'error', check.message);
-          return;
+      await parseAndRenderFile(file, status, (busy) => {
+        chooseButton.toggleAttribute('disabled', busy);
+        dropzone.classList.toggle('is-busy', busy);
+        if (!busy) {
+          fileInput.value = '';
         }
-
-        setStatus(status, 'success', check.message);
-        const document = await parseReplayFile(file, (message) => setStatus(status, 'busy', message));
-        renderResult(document, file.name);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        setStatus(status, 'error', `解析失败：${message}`);
-      } finally {
-        chooseButton.removeAttribute('disabled');
-        dropzone.classList.remove('is-busy');
-        fileInput.value = '';
-      }
+      });
     };
 
     fileInput.addEventListener('change', () => {
@@ -198,7 +238,7 @@ export function startApp(root: HTMLElement): void {
       }
     });
 
-    activeHomeDragCleanup = installWindowFileDrop(dropzone, handleFile);
+    activeFileDropCleanup = installWindowFileDrop(dropzone, handleFile);
 
     main.append(dropzone, status);
     shell.append(createHeader(), main);
@@ -206,21 +246,25 @@ export function startApp(root: HTMLElement): void {
   };
 
   const renderResult = (document: EditorDocument, sourceFileName: string) => {
-    activeHomeDragCleanup?.();
-    activeHomeDragCleanup = null;
+    clearActiveFileDrop();
     root.textContent = '';
 
     let markdown = document.markdown;
     const shell = createElement('div', 'app-shell result-shell');
+    const dropOverlay = createElement('div', 'result-drop-overlay', '释放 replay 文件即可重新解析');
     const header = createElement('header', 'result-header');
     const backButton = createElement('button', 'secondary-button', '返回主界面');
     const downloadButton = createElement('button', 'secondary-button', '下载 Markdown');
+    const savePdfButton = createElement('button', 'secondary-button', '保存 PDF');
+    const actions = createElement('div', 'result-actions');
     const titleWrap = createElement('div', 'result-title-wrap');
     const title = createElement('h1', 'result-title', document.title || 'SC2 Replay 解析结果');
     const meta = createElement('p', 'result-meta', sourceFileName);
+    const status = createElement('p', 'status-line result-status status-idle', '可拖入新的 .SC2Replay 自动重新解析。');
 
-    titleWrap.append(title, meta);
-    header.append(backButton, titleWrap, downloadButton);
+    titleWrap.append(title, meta, status);
+    actions.append(downloadButton, savePdfButton);
+    header.append(backButton, titleWrap, actions);
 
     const layout = createElement('main', 'editor-layout');
     const editorPane = createElement('section', 'editor-pane');
@@ -240,18 +284,32 @@ export function startApp(root: HTMLElement): void {
       renderPreview(preview, markdown);
     };
 
+    const handleFile = async (file: File) => {
+      await parseAndRenderFile(file, status, (busy) => {
+        backButton.toggleAttribute('disabled', busy);
+        downloadButton.toggleAttribute('disabled', busy);
+        savePdfButton.toggleAttribute('disabled', busy);
+        shell.classList.toggle('is-busy', busy);
+      });
+    };
+
     textarea.addEventListener('input', update);
     backButton.addEventListener('click', () => renderHome('已返回主界面，可继续解析新的 replay。'));
     downloadButton.addEventListener('click', () => {
       const name = sourceFileName.replace(/\.sc2replay$/i, '') || 'sc2-replay';
       downloadMarkdown(markdown, `${name}.md`);
     });
+    savePdfButton.addEventListener('click', () => {
+      const name = sourceFileName.replace(/\.sc2replay$/i, '') || 'sc2-replay';
+      savePreviewAsPdf(`${name}.pdf`);
+    });
 
     editorPane.append(editorTitle, textarea);
     previewPane.append(previewTitle, preview);
     layout.append(editorPane, previewPane);
-    shell.append(header, layout);
+    shell.append(header, layout, dropOverlay);
     root.append(shell);
+    activeFileDropCleanup = installWindowFileDrop(shell, handleFile);
     update();
   };
 

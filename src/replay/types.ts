@@ -19,8 +19,6 @@ export interface ReplayExportData {
   meta: ReplayMeta;
   players: ReplayPlayer[];
   timeline: unknown[];
-  samples: unknown[];
-  composition: unknown[];
   units: unknown[];
 }
 

@@ -4,10 +4,11 @@
 
 ## 功能
 
-- 拖入或选择 `.SC2Replay` 文件
+- 拖入或选择 `.SC2Replay` 文件，解析结果页也支持拖入新 replay 自动重新解析
 - 在浏览器本地完成扩展名、大小和 MPQ 文件头检查
 - 通过 Pyodide 运行 `sc2reader` 与 `sc2_replay_exporter`
 - 输出可编辑 Markdown，并实时渲染 icon markdown HTML
+- 支持下载 Markdown 或将预览保存为 PDF
 - GitHub Actions 自动构建并部署到 GitHub Pages
 
 ## 本地开发

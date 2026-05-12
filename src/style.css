@@ -215,6 +215,36 @@ button:disabled {
   background: var(--surface);
 }
 
+.result-shell {
+  position: relative;
+}
+
+.result-shell.is-dragging .result-drop-overlay {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.result-shell.is-busy .result-drop-overlay {
+  display: none;
+}
+
+.result-drop-overlay {
+  position: fixed;
+  inset: 72px 18px 18px;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--accent-strong);
+  font-size: 22px;
+  font-weight: 800;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
 .result-title-wrap {
   min-width: 0;
 }
@@ -236,6 +266,21 @@ button:disabled {
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.result-status {
+  min-height: 0;
+  margin-top: 4px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .editor-layout {
@@ -432,6 +477,14 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .result-actions {
+    justify-content: stretch;
+  }
+
+  .result-actions .secondary-button {
+    flex: 1 1 140px;
+  }
+
   .result-title {
     white-space: normal;
   }
@@ -449,5 +502,35 @@ button:disabled {
   .editor-textarea,
   .preview-content {
     min-height: 0;
+  }
+}
+
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  body.is-pdf-print {
+    background: #ffffff;
+  }
+
+  body.is-pdf-print .result-header,
+  body.is-pdf-print .editor-pane,
+  body.is-pdf-print .pane-title,
+  body.is-pdf-print .result-drop-overlay {
+    display: none;
+  }
+
+  body.is-pdf-print .app-shell,
+  body.is-pdf-print .editor-layout,
+  body.is-pdf-print .preview-pane {
+    display: block;
+    min-height: 0;
+  }
+
+  body.is-pdf-print .preview-content {
+    min-height: 0;
+    overflow: visible;
+    padding: 0;
   }
 }
