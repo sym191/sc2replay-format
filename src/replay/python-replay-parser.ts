@@ -2,10 +2,10 @@ import type { EditorDocument } from './types';
 
 interface PyodideRuntime {
   FS: {
+    mkdirTree(path: string): void;
     writeFile(path: string, data: Uint8Array): void;
     unlink(path: string): void;
   };
-  unpackArchive(buffer: ArrayBuffer | Uint8Array, format: string, options?: { extractDir?: string }): Promise<void> | void;
   runPythonAsync<T = unknown>(code: string): Promise<T>;
 }
 
@@ -17,10 +17,78 @@ declare global {
 
 const PYODIDE_VERSION = '0.29.2';
 const PYODIDE_BASE_URL = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
-const PYTHON_BUNDLE_URL = `${import.meta.env.BASE_URL}python/sc2replay-python.zip`;
+const PYTHON_BUNDLE_URL = `${import.meta.env.BASE_URL}python/sc2replay-python-files.json`;
+const PYTHON_EXTRACT_DIR = '/tmp/sc2replay-python';
+
+interface PythonBundleFile {
+  path: string;
+  data: string;
+}
+
+interface PythonBundle {
+  schema: string;
+  files: PythonBundleFile[];
+}
 
 let scriptPromise: Promise<void> | null = null;
 let runtimePromise: Promise<PyodideRuntime> | null = null;
+
+function buildBootstrapScript(): string {
+  return `
+import sys
+
+extract_dir = ${JSON.stringify(PYTHON_EXTRACT_DIR)}
+
+if extract_dir not in sys.path:
+    sys.path.insert(0, extract_dir)
+
+import sc2_replay_exporter
+`;
+}
+
+function decodeBase64(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes;
+}
+
+function normalizeBundlePath(path: string): string {
+  const normalized = path.replace(/\\/g, '/');
+
+  if (normalized.startsWith('/') || normalized.split('/').includes('..')) {
+    throw new Error(`解析模块包含非法路径：${path}`);
+  }
+
+  return normalized;
+}
+
+function ensureDirectory(pyodide: PyodideRuntime, path: string): void {
+  if (path) {
+    pyodide.FS.mkdirTree(path);
+  }
+}
+
+function writePythonBundle(pyodide: PyodideRuntime, bundle: PythonBundle): void {
+  if (!Array.isArray(bundle.files)) {
+    throw new Error('解析模块清单格式无效。');
+  }
+
+  ensureDirectory(pyodide, PYTHON_EXTRACT_DIR);
+
+  for (const file of bundle.files) {
+    const normalizedPath = normalizeBundlePath(file.path);
+    const targetPath = `${PYTHON_EXTRACT_DIR}/${normalizedPath}`;
+    const lastSlash = targetPath.lastIndexOf('/');
+
+    ensureDirectory(pyodide, targetPath.slice(0, lastSlash));
+    pyodide.FS.writeFile(targetPath, decodeBase64(file.data));
+  }
+}
 
 function loadPyodideScript(): Promise<void> {
   if (window.loadPyodide) {
@@ -62,8 +130,9 @@ async function createRuntime(onProgress: (message: string) => void): Promise<Pyo
     throw new Error(`无法加载解析模块：HTTP ${response.status}`);
   }
 
-  await pyodide.unpackArchive(await response.arrayBuffer(), 'zip', { extractDir: '/' });
-  await pyodide.runPythonAsync('import sys\nsys.path.insert(0, "/")');
+  writePythonBundle(pyodide, (await response.json()) as PythonBundle);
+  await pyodide.runPythonAsync(buildBootstrapScript());
+
   return pyodide;
 }
 
